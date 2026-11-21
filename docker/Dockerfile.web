@@ -1,0 +1,55 @@
+# syntax=docker/dockerfile:1
+# ==============================================================================
+# 云裳女装多 Agent 双域工作台 - Next.js Standalone 多阶段生产镜像 (docker/Dockerfile.web)
+# ==============================================================================
+
+FROM node:20-alpine AS deps
+
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+
+
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+ARG NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+ARG GATEWAY_INTERNAL_URL=http://gateway:8000
+ENV NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL} \
+    GATEWAY_INTERNAL_URL=${GATEWAY_INTERNAL_URL} \
+    NEXT_TELEMETRY_DISABLED=1
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY web/ ./
+
+RUN mkdir -p /app/public && npm run build
+
+
+FROM node:20-alpine AS runner
+
+WORKDIR /app
+
+ARG NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+ARG GATEWAY_INTERNAL_URL=http://gateway:8000
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=3000 \
+    HOSTNAME="0.0.0.0" \
+    NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL} \
+    GATEWAY_INTERNAL_URL=${GATEWAY_INTERNAL_URL}
+
+RUN addgroup --system --gid 1001 nodejs \
+    && adduser --system --uid 1001 nextjs
+
+COPY --from=builder /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+USER nextjs
+
+EXPOSE 3000
+
+CMD ["node", "server.js"]

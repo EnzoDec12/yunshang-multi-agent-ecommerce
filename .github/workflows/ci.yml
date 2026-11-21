@@ -1,0 +1,73 @@
+name: Fullstack CI
+
+on:
+  push:
+    branches: ["main", "master", "cursor/**"]
+  pull_request:
+    branches: ["main", "master"]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (Ruff & Pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      APP_ENV: dev
+      LLM_MODE: mock
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: "pyproject.toml"
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -e ".[dev]"
+
+      - name: Run Ruff static lint check
+        run: ruff check .
+
+      - name: Run Pytest suite
+        run: pytest -v
+
+  frontend:
+    name: Frontend (TypeCheck & Next.js Build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      NEXT_PUBLIC_API_BASE_URL: "http://127.0.0.1:8000"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: "web/package-lock.json"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Run TypeScript typecheck
+        run: npx tsc --noEmit
+
+      - name: Build Next.js standalone bundle
+        run: npm run build

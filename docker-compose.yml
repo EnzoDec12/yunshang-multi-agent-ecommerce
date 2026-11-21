@@ -1,0 +1,295 @@
+# ==============================================================================
+# 云裳女装多 Agent 双域电商系统 - 全栈 8 服务生产级容器编排 (docker-compose.yml)
+# 网络隔离策略：
+#   - 8 个容器全部运行在内部桥接网络 `yunshang-internal`
+#   - 仅对外暴露 `web (3000)` 与 `gateway (8000)`，数据库与 5 域 MCP 服务对宿主机不可直连
+# ==============================================================================
+
+services:
+  # ----------------------------------------------------------------------------
+  # 1. PostgreSQL 持久化库（挂载 docker/init.sql 初始化审计表与 LangGraph 权限）
+  # ----------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-yunshang}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-yunshang_dev_pwd}
+      POSTGRES_DB: ${POSTGRES_DB:-yunshang_open_market}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    networks:
+      - yunshang-internal
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $${POSTGRES_USER:-yunshang} -d $${POSTGRES_DB:-yunshang_open_market}",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  # ----------------------------------------------------------------------------
+  # 2-6. 五个独立业务域 Streamable HTTP MCP Server 容器
+  # ----------------------------------------------------------------------------
+  mcp-pim:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    restart: unless-stopped
+    command:
+      [
+        "python",
+        "-m",
+        "mcp_servers.pim_server",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "18101",
+      ]
+    environment:
+      APP_ENV: prod
+    networks:
+      - yunshang-internal
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:18101/health', timeout=3)",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  mcp-oms:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    restart: unless-stopped
+    command:
+      [
+        "python",
+        "-m",
+        "mcp_servers.oms_server",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "18102",
+      ]
+    environment:
+      APP_ENV: prod
+    networks:
+      - yunshang-internal
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:18102/health', timeout=3)",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  mcp-logistics:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    restart: unless-stopped
+    command:
+      [
+        "python",
+        "-m",
+        "mcp_servers.logistics_server",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "18103",
+      ]
+    environment:
+      APP_ENV: prod
+    networks:
+      - yunshang-internal
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:18103/health', timeout=3)",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  mcp-bi:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    restart: unless-stopped
+    command:
+      [
+        "python",
+        "-m",
+        "mcp_servers.bi_server",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "18104",
+      ]
+    environment:
+      APP_ENV: prod
+    networks:
+      - yunshang-internal
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:18104/health', timeout=3)",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  mcp-market-erp:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    restart: unless-stopped
+    command:
+      [
+        "python",
+        "-m",
+        "mcp_servers.market_erp_server",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "18105",
+      ]
+    environment:
+      APP_ENV: prod
+    networks:
+      - yunshang-internal
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:18105/health', timeout=3)",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  # ----------------------------------------------------------------------------
+  # 7. FastAPI 多 Agent 网关（MCP_SPAWN_LOCAL_SUBPROCESS=false，依赖下游全部就绪）
+  # ----------------------------------------------------------------------------
+  gateway:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    restart: unless-stopped
+    command:
+      [
+        "uvicorn",
+        "gateway.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+      ]
+    environment:
+      APP_ENV: prod
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MCP_SPAWN_LOCAL_SUBPROCESS: "false"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-yunshang}:${POSTGRES_PASSWORD:-yunshang_dev_pwd}@postgres:5432/${POSTGRES_DB:-yunshang_open_market}
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production-yunshang-hs256-signing-secret-2026}
+      LLM_MODE: ${LLM_MODE:-mock}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_API_BASE: ${LLM_API_BASE:-}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-30.0}
+      LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-2}
+      LLM_FALLBACK_MODELS: ${LLM_FALLBACK_MODELS:-}
+      MCP_PIM_URL: http://mcp-pim:18101/mcp
+      MCP_OMS_URL: http://mcp-oms:18102/mcp
+      MCP_LOGISTICS_URL: http://mcp-logistics:18103/mcp
+      MCP_BI_URL: http://mcp-bi:18104/mcp
+      MCP_MARKET_ERP_URL: http://mcp-market-erp:18105/mcp
+      GATEWAY_CORS_ORIGINS: ${GATEWAY_CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-https://cloud.langfuse.com}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mcp-pim:
+        condition: service_healthy
+      mcp-oms:
+        condition: service_healthy
+      mcp-logistics:
+        condition: service_healthy
+      mcp-bi:
+        condition: service_healthy
+      mcp-market-erp:
+        condition: service_healthy
+    networks:
+      - yunshang-internal
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ----------------------------------------------------------------------------
+  # 8. Next.js 双视角工作台前端（Standalone 生产镜像）
+  # ----------------------------------------------------------------------------
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.web
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+        GATEWAY_INTERNAL_URL: http://gateway:8000
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+      GATEWAY_INTERNAL_URL: http://gateway:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      gateway:
+        condition: service_healthy
+    networks:
+      - yunshang-internal
+
+networks:
+  yunshang-internal:
+    driver: bridge
+
+volumes:
+  postgres_data:

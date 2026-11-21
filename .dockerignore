@@ -1,0 +1,39 @@
+# Git & IDE
+.git
+.gitignore
+.github
+.idea
+.vscode
+.cursor
+.DS_Store
+
+# Local runtime & secrets
+.env
+.env.*
+!.env.example
+.demo-runtime
+
+# Python caches & virtualenvs
+.venv
+venv
+env
+__pycache__
+*.py[cod]
+.pytest_cache
+.mypy_cache
+.ruff_cache
+*.egg-info
+build
+dist
+
+# Frontend dependencies & build artifacts
+web/node_modules
+node_modules
+web/.next
+web/out
+*.tsbuildinfo
+
+# Tests, offline evals & docs (not needed in production container runtime)
+tests
+evals
+docs
